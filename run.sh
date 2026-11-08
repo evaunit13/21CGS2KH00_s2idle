@@ -26,6 +26,9 @@ if [ "$EUID" -ne 0 ]; then
     exec sudo "$0" "$@"
 fi
 
+# Ensure /dev/null permissions are correct (prevents permission denied if masked symlinks were touched)
+chmod 666 /dev/null 2>/dev/null || true
+
 echo -e "${BLUE}==================================================================${NC}"
 echo -e "${BLUE}   ThinkPad T14 Gen 3 AMD (21CGS2KH00) s2idle Hardware Fix Setup   ${NC}"
 echo -e "${BLUE}==================================================================${NC}"
@@ -74,56 +77,67 @@ fi
 # 4. Deploy system configuration files
 info "Installing configuration files..."
 
-# Udev rules
+# Udev rules (install -m 644 safely sets permissions without globbing destination dirs)
 mkdir -p /etc/udev/rules.d
-cp -v "$SCRIPT_DIR"/etc/udev/rules.d/*.rules /etc/udev/rules.d/
-chmod 644 /etc/udev/rules.d/*.rules
+install -m 644 -v "$SCRIPT_DIR"/etc/udev/rules.d/*.rules /etc/udev/rules.d/
 
 # Systemd system services
 mkdir -p /etc/systemd/system
-cp -v "$SCRIPT_DIR"/etc/systemd/system/*.service /etc/systemd/system/
-chmod 644 /etc/systemd/system/*.service
+install -m 644 -v "$SCRIPT_DIR"/etc/systemd/system/*.service /etc/systemd/system/
 
 # Systemd logind & sleep drop-ins
 mkdir -p /etc/systemd/logind.conf.d /etc/systemd/sleep.conf.d
-cp -v "$SCRIPT_DIR"/etc/systemd/logind.conf.d/*.conf /etc/systemd/logind.conf.d/
-cp -v "$SCRIPT_DIR"/etc/systemd/sleep.conf.d/*.conf /etc/systemd/sleep.conf.d/
-chmod 644 /etc/systemd/logind.conf.d/*.conf /etc/systemd/sleep.conf.d/*.conf
+install -m 644 -v "$SCRIPT_DIR"/etc/systemd/logind.conf.d/*.conf /etc/systemd/logind.conf.d/
+install -m 644 -v "$SCRIPT_DIR"/etc/systemd/sleep.conf.d/*.conf /etc/systemd/sleep.conf.d/
 
 # Tmpfiles
 mkdir -p /etc/tmpfiles.d
-cp -v "$SCRIPT_DIR"/etc/tmpfiles.d/*.conf /etc/tmpfiles.d/
-chmod 644 /etc/tmpfiles.d/*.conf
+install -m 644 -v "$SCRIPT_DIR"/etc/tmpfiles.d/*.conf /etc/tmpfiles.d/
 
 # Modprobe
 mkdir -p /etc/modprobe.d
-cp -v "$SCRIPT_DIR"/etc/modprobe.d/*.conf /etc/modprobe.d/
-chmod 644 /etc/modprobe.d/*.conf
-
-# Environment & KWin
-mkdir -p /etc/environment.d
-cp -v "$SCRIPT_DIR"/etc/environment.d/*.conf /etc/environment.d/
-chmod 644 /etc/environment.d/*.conf
-
-if ! grep -q "KWIN_DRM_NO_DIRECT_SCANOUT=1" /etc/environment 2>/dev/null; then
-    echo "KWIN_DRM_NO_DIRECT_SCANOUT=1" >> /etc/environment
-    ok "Appended KWIN_DRM_NO_DIRECT_SCANOUT=1 to /etc/environment."
-fi
+install -m 644 -v "$SCRIPT_DIR"/etc/modprobe.d/*.conf /etc/modprobe.d/
 
 # Helpers & Scripts
 mkdir -p /usr/local/bin
-cp -v "$SCRIPT_DIR"/bin/fprintd-led-watchdog.py /usr/local/bin/
-chmod 755 /usr/local/bin/fprintd-led-watchdog.py
+install -m 755 -v "$SCRIPT_DIR"/bin/fprintd-led-watchdog.py /usr/local/bin/
 
 # Systemd user services (system-wide deployment)
-mkdir -p /etc/systemd/user/plasma-powerdevil.service.d /etc/systemd/user/default.target.wants
-cp -v "$SCRIPT_DIR"/etc/systemd/user/fprintd-led-watchdog.service /etc/systemd/user/
-cp -v "$SCRIPT_DIR"/etc/systemd/user/plasma-powerdevil.service.d/*.conf /etc/systemd/user/plasma-powerdevil.service.d/
-chmod 644 /etc/systemd/user/fprintd-led-watchdog.service
-chmod 644 /etc/systemd/user/plasma-powerdevil.service.d/*.conf
-
-# Enable user watchdog globally across all graphical user sessions
+mkdir -p /etc/systemd/user/default.target.wants
+install -m 644 -v "$SCRIPT_DIR"/etc/systemd/user/fprintd-led-watchdog.service /etc/systemd/user/
 ln -sf /etc/systemd/user/fprintd-led-watchdog.service /etc/systemd/user/default.target.wants/fprintd-led-watchdog.service
+
+# Detect Desktop Environment for KDE-specific overrides
+IS_KDE=false
+if command -v kwin_wayland &>/dev/null || command -v startplasma-wayland &>/dev/null || [ "${XDG_CURRENT_DESKTOP:-}" = "KDE" ]; then
+    IS_KDE=true
+fi
+
+if [ "$IS_KDE" = true ]; then
+    info "KDE Plasma detected. Deploying KWin and PowerDevil overrides..."
+    mkdir -p /etc/environment.d /etc/systemd/user/plasma-powerdevil.service.d
+    install -m 644 -v "$SCRIPT_DIR"/etc/environment.d/*.conf /etc/environment.d/
+    install -m 644 -v "$SCRIPT_DIR"/etc/systemd/user/plasma-powerdevil.service.d/*.conf /etc/systemd/user/plasma-powerdevil.service.d/
+
+    if ! grep -q "KWIN_DRM_NO_DIRECT_SCANOUT=1" /etc/environment 2>/dev/null; then
+        echo "KWIN_DRM_NO_DIRECT_SCANOUT=1" >> /etc/environment
+        ok "Appended KWIN_DRM_NO_DIRECT_SCANOUT=1 to /etc/environment."
+    fi
+
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+        USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+        POWERDEVIL_RC="$USER_HOME/.config/powerdevilrc"
+        if [ -f "$POWERDEVIL_RC" ]; then
+            if grep -qi "keyboardbrightness" "$POWERDEVIL_RC"; then
+                info "Purging keyboardbrightness restoration from $POWERDEVIL_RC to prevent EC resume locks..."
+                sed -i '/keyboardbrightness/d' "$POWERDEVIL_RC"
+                ok "Cleaned $POWERDEVIL_RC."
+            fi
+        fi
+    fi
+else
+    info "KDE Plasma not detected (e.g. Niri/GNOME/Sway). Skipping KWin and PowerDevil overrides."
+fi
 
 ok "All configuration files deployed successfully."
 
@@ -209,19 +223,6 @@ else
         warn "Could not automatically determine bootloader configuration tool."
         warn "Please ensure the following arguments are appended to your bootloader configuration:"
         echo -e "${YELLOW}${REQUIRED_ARGS[*]}${NC}"
-    fi
-fi
-
-# 7. Check KDE PowerDevil user configuration
-if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
-    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    POWERDEVIL_RC="$USER_HOME/.config/powerdevilrc"
-    if [ -f "$POWERDEVIL_RC" ]; then
-        if grep -qi "keyboardbrightness" "$POWERDEVIL_RC"; then
-            info "Purging keyboardbrightness restoration from $POWERDEVIL_RC to prevent EC resume locks..."
-            sed -i '/keyboardbrightness/d' "$POWERDEVIL_RC"
-            ok "Cleaned $POWERDEVIL_RC."
-        fi
     fi
 fi
 
