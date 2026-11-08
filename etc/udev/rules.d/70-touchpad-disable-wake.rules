@@ -1,0 +1,1 @@
+ACTION=="add", SUBSYSTEM=="i2c", KERNEL=="i2c-ELAN0678:00", ATTR{power/wakeup}="disabled"

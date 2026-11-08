@@ -1,0 +1,3 @@
+# Prevent AMD DesignWare I2C controller and ELAN Touchscreen/Touchpad runtime suspend deadlocks
+ACTION=="add", SUBSYSTEM=="platform", KERNEL=="AMDI0010:*", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="i2c", KERNEL=="i2c-ELAN*", ATTR{power/control}="on"

@@ -1,0 +1,13 @@
+[Unit]
+Description=Fprintd Goodix LED Reset Watchdog on Unlock
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -u /usr/local/bin/fprintd-led-watchdog.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
