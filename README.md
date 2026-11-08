@@ -16,6 +16,12 @@ On Linux, out-of-the-box driver and firmware misalignments on this model cause s
 
 Running `./run.sh` applies the required kernel parameters, udev rules, systemd units, and desktop environment overrides across any Linux distribution.
 
+## Requirements
+
+- **Init System:** `systemd` (manages background services, sleep drop-ins, and logind configuration).
+- **Python:** `python3` and `python3-gobject` (required by `fprintd-led-watchdog.py` for D-Bus listener support).
+- **Desktop Environment (Optional):** The KWin and PowerDevil overrides target KDE Plasma; other desktop environments ignore them without side effects.
+
 ## Installation
 
 ```bash
